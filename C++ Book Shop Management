@@ -1,0 +1,343 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+struct Book {
+    int id;
+    string title;
+    string author;
+    double price;
+    int quantity;
+
+    // Serialize to a single line (|' separated)
+    string serialize() const {
+        // replace any '|' in text so it doesn't break format
+        auto safe = [](const string &s){
+            string out;
+            for (char c : s) out += (c == '|' ? ' ' : c);
+            return out;
+        };
+        ostringstream oss;
+        oss << id << "|" << safe(title) << "|" << safe(author) << "|" << fixed << setprecision(2) << price << "|" << quantity;
+        return oss.str();
+    }
+
+    static Book deserialize(const string &line) {
+        Book b{0,"","",0.0,0};
+        vector<string> parts;
+        string cur;
+        for (char ch : line) {
+            if (ch == '|') {
+                parts.push_back(cur);
+                cur.clear();
+            } else cur.push_back(ch);
+        }
+        parts.push_back(cur);
+        if (parts.size() >= 5) {
+            try {
+                b.id = stoi(parts[0]);
+                b.title = parts[1];
+                b.author = parts[2];
+                b.price = stod(parts[3]);
+                b.quantity = stoi(parts[4]);
+            } catch (...) {
+                // fallback: keep defaults if parse fails
+            }
+        }
+        return b;
+    }
+};
+
+class BookStore {
+    vector<Book> books;
+    string dbfile;
+    int nextId = 1;
+
+public:
+    BookStore(string filename = "books.db") : dbfile(filename) {
+        loadFromFile();
+        // prepare nextId
+        for (auto &b : books) nextId = max(nextId, b.id + 1);
+    }
+
+    ~BookStore() {
+        saveToFile();
+    }
+
+    void addBook(const string &title, const string &author, double price, int qty) {
+        Book b;
+        b.id = nextId++;
+        b.title = title;
+        b.author = author;
+        b.price = price;
+        b.quantity = qty;
+        books.push_back(b);
+        cout << "Book added with ID " << b.id << ".\n";
+    }
+
+    void listBooks() const {
+        if (books.empty()) {
+            cout << "No books in store.\n";
+            return;
+        }
+        cout << left << setw(6) << "ID" << setw(30) << "Title" << setw(20) << "Author"
+             << setw(10) << "Price" << setw(10) << "Qty" << "\n";
+        cout << string(76, '-') << "\n";
+        for (const auto &b : books) {
+            cout << left << setw(6) << b.id
+                 << setw(30) << truncate(b.title, 29)
+                 << setw(20) << truncate(b.author, 19)
+                 << setw(10) << fixed << setprecision(2) << b.price
+                 << setw(10) << b.quantity << "\n";
+        }
+    }
+
+    void searchById(int id) const {
+        auto it = find_if(books.begin(), books.end(), [id](const Book &b){ return b.id == id; });
+        if (it == books.end()) {
+            cout << "No book found with ID " << id << ".\n";
+            return;
+        }
+        printBook(*it);
+    }
+
+    void searchByTitle(const string &query) const {
+        string q = toLower(query);
+        bool found = false;
+        for (const auto &b : books) {
+            if (toLower(b.title).find(q) != string::npos) {
+                printBook(b);
+                found = true;
+            }
+        }
+        if (!found) cout << "No book found matching title \"" << query << "\".\n";
+    }
+
+    void updateBook(int id) {
+        auto it = find_if(books.begin(), books.end(), [id](const Book &b){ return b.id == id; });
+        if (it == books.end()) {
+            cout << "No book found with ID " << id << ".\n";
+            return;
+        }
+        cout << "Updating book (leave blank to keep current value):\n";
+        cout << "Current title: " << it->title << "\n";
+        string tmp;
+        cout << "New title: ";
+        getlineNonEmptyOptional(tmp);
+        if (!tmp.empty()) it->title = tmp;
+
+        cout << "Current author: " << it->author << "\n";
+        cout << "New author: ";
+        getlineNonEmptyOptional(tmp);
+        if (!tmp.empty()) it->author = tmp;
+
+        cout << "Current price: " << fixed << setprecision(2) << it->price << "\n";
+        cout << "New price: ";
+        string pr;
+        getline(cin, pr);
+        if (!pr.empty()) {
+            try { it->price = stod(pr); } catch (...) { cout << "Invalid price input; kept old price.\n"; }
+        }
+
+        cout << "Current quantity: " << it->quantity << "\n";
+        cout << "New quantity: ";
+        string q;
+        getline(cin, q);
+        if (!q.empty()) {
+            try { it->quantity = stoi(q); } catch (...) { cout << "Invalid quantity input; kept old quantity.\n"; }
+        }
+
+        cout << "Book updated.\n";
+    }
+
+    void deleteBook(int id) {
+        auto it = remove_if(books.begin(), books.end(), [id](const Book &b){ return b.id == id; });
+        if (it == books.end()) {
+            cout << "No book found with ID " << id << ".\n";
+            return;
+        }
+        bool erased = (it != books.end());
+        books.erase(it, books.end());
+        if (erased) cout << "Book with ID " << id << " deleted (if it existed).\n";
+    }
+
+    void sellBook(int id, int count) {
+        auto it = find_if(books.begin(), books.end(), [id](const Book &b){ return b.id == id; });
+        if (it == books.end()) {
+            cout << "No book found with ID " << id << ".\n";
+            return;
+        }
+        if (count <= 0) {
+            cout << "Quantity must be positive.\n";
+            return;
+        }
+        if (it->quantity < count) {
+            cout << "Not enough stock. Available: " << it->quantity << "\n";
+            return;
+        }
+        it->quantity -= count;
+        double total = it->price * count;
+        cout << "Sold " << count << " copies of \"" << it->title << "\". Total: Rs " << fixed << setprecision(2) << total << "\n";
+    }
+
+    void saveToFile() const {
+        ofstream ofs(dbfile, ios::trunc);
+        if (!ofs) {
+            cerr << "Error: could not open " << dbfile << " for writing.\n";
+            return;
+        }
+        for (const auto &b : books) {
+            ofs << b.serialize() << '\n';
+        }
+    }
+
+    void loadFromFile() {
+        books.clear();
+        ifstream ifs(dbfile);
+        if (!ifs) return; // no file yet is ok
+        string line;
+        while (getline(ifs, line)) {
+            if (line.empty()) continue;
+            Book b = Book::deserialize(line);
+            if (b.id > 0) books.push_back(b);
+        }
+    }
+
+private:
+    static string toLower(string s) {
+        transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return tolower(c); });
+        return s;
+    }
+
+    static string truncate(const string &s, size_t width) {
+        if (s.size() <= width) return s;
+        return s.substr(0, width - 3) + "...";
+    }
+
+    static void printBook(const Book &b) {
+        cout << "--------------------------------------\n";
+        cout << "ID      : " << b.id << '\n';
+        cout << "Title   : " << b.title << '\n';
+        cout << "Author  : " << b.author << '\n';
+        cout << "Price   : Rs " << fixed << setprecision(2) << b.price << '\n';
+        cout << "Quantity: " << b.quantity << '\n';
+        cout << "--------------------------------------\n";
+    }
+
+    // safely get a line, returns empty string if user presses enter immediately (used for optional edits)
+    static void getlineNonEmptyOptional(string &out) {
+        string tmp;
+        getline(cin, tmp);
+        out = tmp;
+    }
+};
+
+// helper utilities for menu input:
+int getInt(const string &prompt) {
+    while (true) {
+        cout << prompt;
+        string line;
+        if (!getline(cin, line)) return 0;
+        try {
+            if (line.empty()) { cout << "Please enter a number.\n"; continue; }
+            int v = stoi(line);
+            return v;
+        } catch (...) { cout << "Invalid integer, try again.\n"; }
+    }
+}
+
+double getDouble(const string &prompt) {
+    while (true) {
+        cout << prompt;
+        string line;
+        if (!getline(cin, line)) return 0.0;
+        try {
+            if (line.empty()) { cout << "Please enter a number.\n"; continue; }
+            double v = stod(line);
+            return v;
+        } catch (...) { cout << "Invalid number, try again.\n"; }
+    }
+}
+
+string getLineNonEmpty(const string &prompt) {
+    while (true) {
+        cout << prompt;
+        string s;
+        getline(cin, s);
+        if (!s.empty()) return s;
+        cout << "Input cannot be empty. Try again.\n";
+    }
+}
+
+void showMenu() {
+    cout << "\n=== Book Shop Management ===\n";
+    cout << "1. Add book\n";
+    cout << "2. List all books\n";
+    cout << "3. Search by ID\n";
+    cout << "4. Search by Title\n";
+    cout << "5. Update book\n";
+    cout << "6. Delete book\n";
+    cout << "7. Sell book\n";
+    cout << "8. Save & Exit\n";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    BookStore store("books.db");
+
+    while (true) {
+        showMenu();
+        int choice = getInt("Choose option: ");
+        switch (choice) {
+            case 1: {
+                string title = getLineNonEmpty("Title: ");
+                string author = getLineNonEmpty("Author: ");
+                double price = getDouble("Price (e.g. 199.99): ");
+                int qty = getInt("Quantity: ");
+                store.addBook(title, author, price, qty);
+                break;
+            }
+            case 2:
+                store.listBooks();
+                break;
+            case 3: {
+                int id = getInt("Enter book ID: ");
+                store.searchById(id);
+                break;
+            }
+            case 4: {
+                cout << "Enter part or full title to search: ";
+                string q;
+                getline(cin, q);
+                if (q.empty()) cout << "Empty search string.\n";
+                else store.searchByTitle(q);
+                break;
+            }
+            case 5: {
+                int id = getInt("Enter book ID to update: ");
+                store.updateBook(id);
+                break;
+            }
+            case 6: {
+                int id = getInt("Enter book ID to delete: ");
+                store.deleteBook(id);
+                break;
+            }
+            case 7: {
+                int id = getInt("Enter book ID to sell: ");
+                int qty = getInt("Enter quantity to sell: ");
+                store.sellBook(id, qty);
+                break;
+            }
+            case 8:
+                cout << "Saving and exiting. Bye!\n";
+                store.saveToFile();
+                return 0;
+            default:
+                cout << "Invalid choice. Try again.\n";
+        }
+    }
+
+    return 0;
+}
